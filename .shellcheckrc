@@ -1,0 +1,17 @@
+# Resolve sourced files relative to the script being checked.
+# Lets shellcheck follow `source "$(dirname "$0")/../lib/ora-common.sh"`
+# in bin/*.sh and catch undefined helpers from the lib.
+source-path=SCRIPTDIR
+external-sources=true
+
+# Pin the dialect explicitly so any file without a shebang is still treated as bash.
+shell=bash
+
+# Don't flag dynamic `source "$ENV_FILE"` calls (env files live outside the repo).
+disable=SC1091
+
+# Opt-in checks worth turning on:
+enable=quote-safe-variables       # warns when an unquoted var could word-split
+enable=add-default-case           # forces a default branch in case statements
+enable=check-unassigned-uppercase # catches typos like $CONNNECT_STRING
+enable=require-variable-braces    # consistent ${var}, matches your existing style
