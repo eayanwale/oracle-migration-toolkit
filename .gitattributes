@@ -1,0 +1,7 @@
+# Force LF for shell scripts and config files so shellcheck (and bash) on
+# Windows doesn't see literal carriage returns under core.autocrlf=true.
+*.sh             text eol=lf
+*.yml            text eol=lf
+*.yaml           text eol=lf
+.shellcheckrc    text eol=lf
+.gitattributes   text eol=lf
