@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
 
-log() { echo "[$TS] $*"; }
-
-err() { echo "ERROR: $*"; }
-
-warn() { echo "WARNING: $*"; }
-
 require_commands() {
     local cmd
     local missing=0
@@ -28,7 +22,7 @@ source_oracle_env() {
         return 1
     fi
 
-    if ! grep -q "$db_name" /etc/oratab; then
+    if ! grep -q "^${db_name}:" /etc/oratab; then
         err "Database '${db_name}' not found in /etc/oratab"
         return 1
     fi
@@ -50,7 +44,7 @@ check_oracle_instance() {
     local db_name="$1"
     local db_connect="${2:-/ as sysdba}"
 
-    if ps -ef | grep -V grep | grep -qi "pmon_${db_name}"; then
+    if ! ps -ef | grep -v grep | grep -qi "pmon_${db_name}"; then
         err "No pmon process found for ${db_name} - instance may be down"
         return 1
     fi
@@ -131,7 +125,7 @@ check_disk_space() {
         return 1
     fi
 
-    if (( disk_check > THRESHOLD )); then
+    if (( disk_check > threshold )); then
         warn "${mount} at ${disk_check}% - exceeds ${threshold}% threshold"
         return 1
     else
