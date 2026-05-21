@@ -99,7 +99,7 @@ while getopts ":vs:d:D:q:c:e:r:P:t:h" opt; do
     esac
 done
 
-if [[ -z "${SRC_DB}" || -z "${DST_DB}" || -z "${DPUMP_DIR}" || -z "${QUERY}" ]]; then
+if [[ -z "${SRC_DB}" || -z "${DST_DB}" || -z "${QUERY}" ]]; then
     help
     exit "${EXIT_BAD_ARGS}"
 fi

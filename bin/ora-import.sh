@@ -135,8 +135,8 @@ done
 
 ENV_FILE="${ENV_DIR}/oracle_env_${DBNAME}.sh"
 
-if [[ -z "${DBNAME}" || -z "${DPUMP_DIR}" || -z "${FILE}" ]]; then
-    err "At least import database (-d), datapump (-D) and file (-f) are required"
+if [[ -z "${DBNAME}" ||  -z "${FILE}" ]]; then
+    err "At least import database (-d) and file (-f) are required"
     exit "${EXIT_BAD_ARGS}"
 fi
 
