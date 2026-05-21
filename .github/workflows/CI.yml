@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Lint bin/ scripts
+        run: find bin/ -name '*.sh' -print0 | xargs -0 shellcheck
+
+      - name: Lint lib/ scripts
+        run: find lib/ -name '*.sh' -print0 | xargs -0 shellcheck
