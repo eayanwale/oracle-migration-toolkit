@@ -9,9 +9,10 @@ readonly EXIT_BAD_ARGS=3
 
 help() {
     cat <<EOF
-        Usage: $0 -d <dbname> -D <dpump_dir> -q <schema_query> -o <output_dir> [options]
+        Usage: $0 -d <dbname> -D <dpump_dir> -q <schema_query> [options]
 
         Export Oracle schemas via Data Pump, tar the dump files, and log to a manifest.
+        The tar archive is written into the Data Pump directory on disk.
 
         Required:
         -d DBNAME       Database name (used for env file, connect identifier, and file naming)
@@ -26,7 +27,8 @@ help() {
                         (default: /home/oracle/scripts)
         -t THRESHOLD    Disk usage percentage threshold — abort if exceeded (default: 85)
         -m MOUNT_POINT  Mount point to check disk space on (default: derived from DPUMP_DIR)
-        -M MANIFEST     Path to manifest log file (default: <OUTPUT_DIR>/export_manifest.log)
+        -M MANIFEST     Path to manifest log file
+                        (default: <MOUNT_POINT>/tmp/ora-exports/<TS>_export_<DBNAME>_manifest.log)
         -P PARALLEL     expdp PARALLEL degree (default: 2)
         --dry-run       Validate inputs, check instance, show what would run — no export
         -v              Show version
@@ -39,20 +41,20 @@ help() {
         3   Invalid arguments or missing required flags
 
         Manifest format (pipe-delimited, appended after each successful export):
-        TIMESTAMP | DBNAME | SCHEMAS | TARFILE | SIZE
+        STARTTIME|DBNAME|SCHEMAS|TARFILE|SIZE|ENDTIME
 
         Examples:
         # Export schemas matching STACK% from APEXDB:
-        $0 -d APEXDB -D EXPORT_DIR -q "select username from dba_users where username like 'STACK%'" -o /backup/exports
+        $0 -d APEXDB -D EXPORT_DIR -q "select username from dba_users where username like 'STACK%'"
 
         # With wallet auth and custom threshold:
-        $0 -d FREEPDB1 -D DPUMP_DIR -q "select username from dba_users where account_status='OPEN'" -o /backup -c "/@FREEPDB1" -t 90
+        $0 -d FREEPDB1 -D DPUMP_DIR -q "select username from dba_users where account_status='OPEN'" -c "/@FREEPDB1" -t 90
 
         # Dry run — validate everything without exporting:
-        $0 --dry-run -d APEXDB -D EXPORT_DIR -q "select username from dba_users where username like 'STACK%'" -o /backup/exports
+        $0 --dry-run -d APEXDB -D EXPORT_DIR -q "select username from dba_users where username like 'STACK%'"
 
-        # Cron job — nightly export with 14-day manifest history:
-        0 1 * * * /opt/oracle/scripts/ora-export.sh -d APEXDB -D EXPORT_DIR -q "select username from dba_users where username like 'STACK%'" -o /backup/exports >> /var/log/ora-export.log 2>&1
+        # Cron job — nightly export, manifest written to a fixed path:
+        0 1 * * * /opt/oracle/scripts/ora-export.sh -d APEXDB -D EXPORT_DIR -q "select username from dba_users where username like 'STACK%'" -M /backup/exports/manifest.log >> /var/log/ora-export.log 2>&1
 EOF
 }
 
@@ -66,7 +68,7 @@ warn() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $*" >&2; }
 
 TS=$(date +%Y-%m-%d_%H%M%S)
 
-ENV_DIR="/home/oracle/scripts/"
+ENV_DIR="/home/oracle/scripts"
 DBNAME=""
 DPUMP_DIR="DATA_PUMP_DIR"
 QUERY=""
@@ -101,7 +103,7 @@ while getopts ":vd:D:q:t:c:m:M:e:P:h" opt; do
         P) PARALLEL="$OPTARG" ;;
         h) help; exit 0 ;;
         v) version; exit 0 ;;
-        ?) err "Invalid option"; help; exit 1;;
+        ?) err "Invalid option: -${OPTARG}"; help; exit $EXIT_BAD_ARGS;;
     esac
 done
 
@@ -119,6 +121,7 @@ log "Threshold:     ${THRESHOLD}"
 log "Dry run:       ${DRY_RUN}"
 echo
 
+# shellcheck source=../lib/ora-common.sh
 source "$(dirname "$0")/../lib/ora-common.sh"
 
 require_commands "sqlplus" "expdp"
@@ -131,11 +134,10 @@ source "$ENV_FILE" || {
 
 check_oracle_instance "$DBNAME" "$CONNECT_STRING"
 
-if [[ -z "$MOUNT_POINT" ]]; then
-    dir_path="$(validate_dpump_dir "$DPUMP_DIR" "$CONNECT_STRING")"
-    dpump="${dir_path#/}"
-    MOUNT_POINT="/${dpump%%/*}"
-fi
+dir_path="$(validate_dpump_dir "$DPUMP_DIR" "$CONNECT_STRING")"
+dpump="${dir_path#/}"
+[[ -z "$MOUNT_POINT" ]] && MOUNT_POINT="/${dpump%%/*}"
+
 log "Data Pump directory ${DPUMP_DIR} validated (${dir_path})"
 
 check_disk_space "$MOUNT_POINT" "$THRESHOLD"
@@ -156,26 +158,27 @@ if [[ "$DRY_RUN" == true ]]; then
     log "[DRY RUN]      LOGFILE=${DBNAME}_${TS}_export.log"
     log "[DRY RUN]      PARALLEL=${PARALLEL}"
     echo
-    log "[DRY RUN] Create archive: ${TS}_export_${DBNAME}.tar.gz"
-    log "[DRY RUN] Write to manifest file: ${MANIFEST}"
+    log "[DRY RUN] Would create archive: ${TS}_export_${DBNAME}.tar.gz"
+    log "[DRY RUN] Would write to manifest file: ${MANIFEST}"
     log "[DRY RUN] No export performed"
     exit $EXIT_DRYRUN
 fi
 
+begin_exp_ts="Start-$(date '+%H:%M:%S')"
+
 export_failures=0
 while read -r schema; do
-    [[ -z "$schema" ]] && continue
+    [[ -z "${schema// }" ]] && continue
 
     log "Exporting schema: ${schema}"
 
-    PARFILE="./${TS}_${schema}_${DBNAME}.par"
-    mkdir -p "$(dirname "${PARFILE}")"
+    PARFILE="./exp_${TS}_${schema}_${DBNAME}.par"
     touch "${PARFILE}"
     chmod 600 "${PARFILE}"
 
     cat > "${PARFILE}" <<EOF
 schemas=${schema}
-dumpfile=${TS}_${schema}_%U.dmp
+dumpfile=${TS}_${schema}_export_%U.dmp
 logfile=${TS}_${schema}_export.log
 directory=${DPUMP_DIR}
 parallel=${PARALLEL}
@@ -187,9 +190,9 @@ EOF
     else
         log "Export complete: ${schema} -> ${TS}_${schema}_%U.dmp"
 
-        if ( grep -q "Successfully completed" "${dir_path}/${TS}_${schema}_export.log" ); then
+        if grep -q "Successfully completed" "${dir_path}/${TS}_${schema}_export.log"; then
             log "Export log indicates success for schema: ${schema}"
-        elif ( grep -q "completed with" "${dir_path}/${TS}_${schema}_export.log" ); then
+        elif grep -q "completed with" "${dir_path}/${TS}_${schema}_export.log"; then
             warn "Export log indicates completion with warnings for schema: ${schema}"
         else
             err "Export log does not indicate success for schema: ${schema}"
@@ -200,6 +203,7 @@ EOF
     rm -f "${PARFILE}"
 
 done <<< "$schemas"
+finished_exp_ts="End-$(date '+%H:%M:%S')"
 
 log "Archiving export logs for schemas: ${schemas}"
 TAR_FILE="${dir_path}/${TS}_export_${DBNAME}.tar.gz"
@@ -217,12 +221,10 @@ tar -tvf "$TAR_FILE"
 tar_size=$(stat -c%s "$TAR_FILE")
 
 if [[ -z $MANIFEST ]]; then
-    MANIFEST="${MOUNT_POINT}/tmp/ora-exports/${DBNAME}_manifest.log"
+    MANIFEST="${MOUNT_POINT}/tmp/ora-exports/${TS}_export_${DBNAME}_manifest.log"
 fi
 mkdir -p "$(dirname "${MANIFEST}")"
-for sch in $schemas; do
-    echo "$(date '+%Y-%m-%d %H:%M:%S') | ${DBNAME} | ${sch} | ${TAR_FILE} | ${tar_size}" >> "${MANIFEST}"
-done
+echo "${begin_exp_ts}|${DBNAME}|$(printf '%s\n' "${schemas}" | paste -sd, -)|${TAR_FILE}|${tar_size}|${finished_exp_ts}" >> "${MANIFEST}"
 log "Export manifest updated: ${MANIFEST}"
 
 if [[ $export_failures -gt 0 ]]; then
