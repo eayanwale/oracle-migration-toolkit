@@ -1,6 +1,6 @@
 # oracle-migration-toolkit
 
-Standalone Oracle database migration scripts — Data Pump export, import, local migration, and cloud (AWS) migration with dynamic remote script generation.
+Standalone Oracle database migration scripts — Data Pump export, import, local migration, and remote/cloud migration with dynamic remote script generation over SSH.
 
 ## Background
 
@@ -17,7 +17,7 @@ The general-purpose scripts (disk monitoring, backup rotation, file transfer, sy
 | `bin/ora-export.sh` | Data Pump schema export with parfile, tar archival, and manifest logging | Extracted from `DATABASE_BACKUP()` |
 | `bin/ora-import.sh` | Data Pump schema import with tar extraction, remap, and post-import verification | Extracted from `DATABASE_IMPORT()` |
 | `bin/ora-migrate-local.sh` | Orchestrates export → import on the same server | Extracted from `LOCAL_MIGRATION()` |
-| `bin/ora-migrate-cloud.sh` | End-to-end on-prem → cloud migration with dynamic remote script generation | Extracted from `CLOUD_MIGRATION()` |
+| `bin/ora-migrate-cloud` | End-to-end on-prem → remote/cloud migration with dynamic remote script generation | Extracted from `CLOUD_MIGRATION()` |
 | `lib/ora-common.sh` | Shared helper functions sourced by all scripts | New — replaces duplicated logic |
 
 ## Prerequisites
@@ -34,28 +34,32 @@ The general-purpose scripts (disk monitoring, backup rotation, file transfer, sy
 ```bash
 git clone https://github.com/eayanwale/oracle-migration-toolkit.git
 cd oracle-migration-toolkit
-chmod +x bin/*.sh
+chmod +x bin/*
 
 # Dry run — validate without exporting:
 ./bin/ora-export.sh --dry-run \
   -d APEXDB \
-  -D DATA_PUMP_DIR \
   -q "select username from dba_users where username like 'STACK%'"
 
-# Full export:
+# Full export (DPUMP_DIR defaults to DATA_PUMP_DIR):
 ./bin/ora-export.sh \
   -d APEXDB \
-  -D DATA_PUMP_DIR \
   -q "select username from dba_users where username like 'STACK%'" \
   -c "/@APEXDB"
 
-# Import from a tar archive with schema remap:
+# Import from the manifest produced by the export (schemas + archive resolved automatically):
 ./bin/ora-import.sh \
   -d FREEPDB1 \
-  -D IMPORT_DIR \
+  -f /backup/exports/2026-05-20_export_APEXDB_manifest.log \
+  -c "/@FREEPDB1"
+
+# Import from a tar archive with schema remap (STACK_USER -> STACK_USER_DEV):
+./bin/ora-import.sh \
+  -d FREEPDB1 \
   -f /backup/exports/2026-05-20_export_APEXDB.tar.gz \
-  -s STACK_USER \
-  -t STACK_USER_DEV \
+  -s "/@APEXDB" \
+  -q "select username from dba_users where username='STACK_USER'" \
+  -r DEV \
   -c "/@FREEPDB1"
 ```
 
@@ -83,22 +87,29 @@ Exports one or more Oracle schemas via Data Pump. Runs a SQL query to discover s
 
 ### ora-import.sh
 
-Imports schemas from a dump file or tar archive into a target database. Handles tar extraction into the Data Pump directory, supports `REMAP_SCHEMA` for source-to-target schema mapping, and runs post-import verification queries to confirm objects exist in the target schema.
+Imports schemas into a target database from a `.dmp`, `.tar`/`.tar.gz`/`.tgz` archive, or an export manifest. When given a manifest, the schema list and tar path are resolved automatically; otherwise the schema list is discovered via a SQL query (`-q`) against a source connection (`-s`). Supports `REMAP_SCHEMA` via a `-r SUFFIX` flag (every source schema `X` is remapped to `X_<SUFFIX>`), and runs a post-import object count against `dba_objects` per schema.
 
 ```bash
-# Import with schema remap:
-./bin/ora-import.sh -d FREEPDB1 -D IMPORT_DIR \
-  -f /backup/exports/2026-05-20_export_APEXDB.tar.gz \
-  -s STACK_USER,STACK_ADMIN \
-  -t STACK_USER_DEV,STACK_ADMIN_DEV
+# Import from a manifest (schemas and tar resolved automatically):
+./bin/ora-import.sh -d FREEPDB1 \
+  -f /backup/exports/2026-05-20_export_APEXDB_manifest.log
 
-# Import as-is (no remap):
-./bin/ora-import.sh -d FREEPDB1 -D IMPORT_DIR \
-  -f /data/imports/STACK_USER.dmp
+# Import a tar archive with schema discovery against a source DB, with suffix remap:
+./bin/ora-import.sh -d FREEPDB1 \
+  -f /backup/exports/2026-05-20_export_APEXDB.tar.gz \
+  -s "/@APEXDB" \
+  -q "select username from dba_users where username like 'STACK%'" \
+  -r DEV
+
+# Import a single .dmp as-is (still needs -s/-q to know which schemas to import):
+./bin/ora-import.sh -d FREEPDB1 \
+  -f /data/imports/STACK_USER.dmp \
+  -s "/@APEXDB" \
+  -q "select username from dba_users where username='STACK_USER'"
 
 # Dry run:
-./bin/ora-import.sh --dry-run -d FREEPDB1 -D IMPORT_DIR \
-  -f /backup/exports/2026-05-20_export_APEXDB.tar.gz
+./bin/ora-import.sh --dry-run -d FREEPDB1 \
+  -f /backup/exports/2026-05-20_export_APEXDB_manifest.log
 ```
 
 ### ora-migrate-local.sh
@@ -106,40 +117,38 @@ Imports schemas from a dump file or tar archive into a target database. Handles 
 Orchestrates a full local migration by calling `ora-export.sh` then `ora-import.sh` on the same server. Passes flags through to both scripts.
 
 ```bash
-# Migrate schemas from APEXDB to DEVDB:
+# Migrate schemas from APEXDB to DEVDB (DPUMP_DIR defaults to DATA_PUMP_DIR):
 ./bin/ora-migrate-local.sh \
   -s APEXDB -d DEVDB \
-  -D DATA_PUMP_DIR \
   -q "select username from dba_users where username like 'STACK%'"
 
 # Dry run:
 ./bin/ora-migrate-local.sh --dry-run \
   -s APEXDB -d DEVDB \
-  -D DATA_PUMP_DIR \
   -q "select username from dba_users where username like 'STACK%'"
 ```
 
-### ora-migrate-cloud.sh
+### ora-migrate-cloud
 
-End-to-end migration from an on-prem Oracle database to a remote (cloud) instance. Exports locally, transfers the tar archive via SCP with retry and checksum verification, dynamically generates a remote import script tailored to the target environment, pushes and executes it over SSH.
+End-to-end migration from an on-prem Oracle database to a remote (cloud) instance. Exports locally via `ora-export.sh`, transfers the tar archive and manifest to the remote host via `scp`, dynamically generates a remote import script tailored to the destination environment, then pushes and executes it over `ssh`. The remote script extracts the archive into the destination's Data Pump directory and runs per-schema `impdp` with optional `remap_schema` suffix.
 
 ```bash
-# Migrate to AWS:
-./bin/ora-migrate-cloud.sh \
+# Migrate to a remote host (e.g. AWS EC2):
+./bin/ora-migrate-cloud \
   -s APEXDB -d CLOUDDB \
-  -D DATA_PUMP_DIR \
   -H ec2-xx-xx-xx-xx.compute.amazonaws.com \
   -u ec2-user \
   -i ~/.ssh/aws.pem \
+  -p /u01/app/oracle/admin/CLOUDDB/dpdump \
   -q "select username from dba_users where username like 'STACK%'"
 
 # Dry run:
-./bin/ora-migrate-cloud.sh --dry-run \
+./bin/ora-migrate-cloud --dry-run \
   -s APEXDB -d CLOUDDB \
-  -D DATA_PUMP_DIR \
   -H ec2-xx-xx-xx-xx.compute.amazonaws.com \
   -u ec2-user \
   -i ~/.ssh/aws.pem \
+  -p /u01/app/oracle/admin/CLOUDDB/dpdump \
   -q "select username from dba_users where username like 'STACK%'"
 ```
 
@@ -147,13 +156,14 @@ End-to-end migration from an on-prem Oracle database to a remote (cloud) instanc
 
 Shared library sourced by all scripts. Not executable on its own. Provides:
 
-- `source_oracle_env` — source the correct Oracle environment file with validation
-- `check_oracle_instance` — verify the database instance is OPEN via sqlplus
-- `validate_dpump_dir` — confirm a Data Pump directory object exists in `dba_directories`
-- `get_schemas` — run a SQL query and return schema names
-- `check_disk_space` — verify disk usage is below threshold
-- `require_commands` — fail fast if required tools are missing
-- `log`, `err`, `warn` — timestamped output to stdout/stderr
+- `source_oracle_env` — source `oraenv` for a DB listed in `/etc/oratab`, with `ORACLE_HOME`/`ORACLE_SID` validation
+- `check_oracle_instance` — verify the instance has a `pmon_<DB>` process and `v$instance.status = 'OPEN'`
+- `validate_dpump_dir` — confirm a Data Pump directory object exists in `all_directories` and the path exists on disk
+- `get_schemas` — run a SQL query and return schema names (one per line)
+- `check_disk_space` — verify disk usage on a mount point is below a percentage threshold
+- `require_commands` — fail fast if required tools (sqlplus, expdp, impdp, ssh, scp, tar) are missing
+
+The `log`, `err`, and `warn` helpers are defined in each top-level script and consumed by these library functions — so any script sourcing `ora-common.sh` must define them first (or source a shim that does).
 
 ## Conventions
 
@@ -176,12 +186,11 @@ All scripts follow consistent patterns:
 
 ## Roadmap
 
-- `ora-migrate-local.sh` and `ora-migrate-cloud.sh` — orchestration scripts (Phase 2)
 - Bats unit tests for argument validation and exit codes
-- ShellCheck enforcement in CI
 - Oracle 23ai Free container integration tests in GitHub Actions
 - Manifest rotation and reporting tools
 - Support for pluggable database (PDB) level migrations
+- `scp`/`ssh` retry with backoff and checksum verification on cloud transfer
 
 ## Related repos
 
