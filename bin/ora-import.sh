@@ -74,11 +74,11 @@ TS=$(date +%Y-%m-%d_%H%M%S)
 extract_archive() {
     local archive="$1"
     local dest="$2"
- 
-    if [[ "$archive" == *.tar.gz || "$archive" == *.tgz ]]; then
-        tar -xzf "$archive" -C "$dest"
+
+    if [[ "${archive}" == *.tar.gz || "${archive}" == *.tgz ]]; then
+        tar -xzf "${archive}" -C "${dest}"
     else
-        tar -xf "$archive" -C "$dest"
+        tar -xf "${archive}" -C "${dest}"
     fi
 }
 
@@ -86,7 +86,7 @@ schema_remap() {
     local schema_str="$1"
     local remap_attach="$2"
 
-    if [[ -n "$remap_attach" ]]; then
+    if [[ -n "${remap_attach}" ]]; then
         echo "${schema_str}:${schema_str}_${remap_attach}"
     else
         echo "${schema_str}"
@@ -107,81 +107,81 @@ SCHEMAS=""
 
 ARGS=()
 for arg in "$@"; do
-    case $arg in
+    case ${arg} in
         --dry-run) DRY_RUN=true ;;
         --version) version; exit 0 ;;
         --help) help; exit 0 ;;
-        *) ARGS+=("$arg") ;;
+        *) ARGS+=("${arg}") ;;
     esac
 done
 set -- "${ARGS[@]+"${ARGS[@]}"}"
 
 while getopts ":vd:s:D:f:q:c:m:e:r:h" opt; do
-    case $opt in
-        d) DBNAME="$OPTARG" ;;
-        s) SRC_CONNECT="$OPTARG" ;;
-        D) DPUMP_DIR="$OPTARG" ;;
-        f) FILE="$OPTARG" ;;
-        q) QUERY="$OPTARG" ;;
-        c) TGT_CONNECT="$OPTARG" ;;
-        m) MOUNT_POINT="$OPTARG" ;;
-        e) ENV_DIR="$OPTARG";;
-        r) SUFFIX="$OPTARG" ;;
+    case ${opt} in
+        d) DBNAME="${OPTARG}" ;;
+        s) SRC_CONNECT="${OPTARG}" ;;
+        D) DPUMP_DIR="${OPTARG}" ;;
+        f) FILE="${OPTARG}" ;;
+        q) QUERY="${OPTARG}" ;;
+        c) TGT_CONNECT="${OPTARG}" ;;
+        m) MOUNT_POINT="${OPTARG}" ;;
+        e) ENV_DIR="${OPTARG}";;
+        r) SUFFIX="${OPTARG}" ;;
         h) help; exit 0 ;;
         v) version; exit 0 ;;
-        ?) err "Invalid option: -${OPTARG}"; help; exit $EXIT_BAD_ARGS;;
+        *) err "Invalid option: -${OPTARG}"; help; exit "${EXIT_BAD_ARGS}";;
     esac
 done
 
 ENV_FILE="${ENV_DIR}/oracle_env_${DBNAME}.sh"
 
-if [[ -z "$DBNAME" || -z "$DPUMP_DIR" || -z "$FILE" ]]; then
+if [[ -z "${DBNAME}" || -z "${DPUMP_DIR}" || -z "${FILE}" ]]; then
     err "At least import database (-d), datapump (-D) and file (-f) are required"
-    exit $EXIT_BAD_ARGS
+    exit "${EXIT_BAD_ARGS}"
 fi
 
-if [[ "$FILE" != *manifest* ]]; then
-    if [[ -z "$QUERY" || -z "$SRC_CONNECT" ]]; then
+if [[ "${FILE}" != *manifest* ]]; then
+    if [[ -z "${QUERY}" || -z "${SRC_CONNECT}" ]]; then
         err "Source connection (-s) and schema query (-q) required when not using a manifest"
-        exit $EXIT_BAD_ARGS
+        exit "${EXIT_BAD_ARGS}"
     fi
 fi
 
-if [[ ! -f "$FILE" ]]; then
+if [[ ! -f "${FILE}" ]]; then
     err "File not found: ${FILE}"
-    exit $EXIT_BAD_ARGS
+    exit "${EXIT_BAD_ARGS}"
 fi
 
 # shellcheck source=../lib/ora-common.sh
 source "$(dirname "$0")/../lib/ora-common.sh"
 
 require_commands "sqlplus" "impdp"
-if [[ "$FILE" == *.tar ]]; then
+if [[ "${FILE}" == *.tar ]]; then
     require_commands "tar"
 fi
 
 log "Sourcing Oracle environment for ${DBNAME}"
-source "$ENV_FILE" || {
+source "${ENV_FILE}" || {
     log "No environmnt script defined. Sourcing via '${DBNAME}'"
-    source_oracle_env "$DBNAME"
+    source_oracle_env "${DBNAME}"
 }
 
-check_oracle_instance "$DBNAME" "$TGT_CONNECT"
+check_oracle_instance "${DBNAME}" "${TGT_CONNECT}"
 
-dir_path="$(validate_dpump_dir "$DPUMP_DIR" "$TGT_CONNECT")"
+dir_path="$(validate_dpump_dir "${DPUMP_DIR}" "${TGT_CONNECT}")"
 dpump="${dir_path#/}"
-[[ -z $MOUNT_POINT ]] && MOUNT_POINT="/${dpump%%/*}"
+[[ -z ${MOUNT_POINT} ]] && MOUNT_POINT="/${dpump%%/*}"
 
 log "Data Pump directory ${DPUMP_DIR} validated (${dir_path})"
 
 ARCHIVE_TO_EXTRACT=""
 DMP_TO_COPY=""
 
-if [[ "$FILE" == *manifest* ]]; then
-    IFS='|' read -r _ SOURCEDB SCHEMAS TARFILE _ _ <<< "$(tail -1 "$FILE")"
+if [[ "${FILE}" == *manifest* ]]; then
+    IFS='|' read -r _ SOURCEDB SCHEMAS TARFILE _ _ <<< "$(tail -1 "${FILE}")"
     SOURCEDB="${SOURCEDB// /}"
     TARFILE="${TARFILE// /}"
-    [[ "$TARFILE" != /* ]] && TARFILE="$(dirname "$FILE")/${TARFILE}"
+    [[ "${TARFILE}" != /* ]] && TARFILE="$(dirname "${FILE}")/${TARFILE}"
     SCHEMAS=$(tr ',' '\n' <<< "${SCHEMAS// /}")
 
     log "Manifest file detected"
@@ -189,83 +189,83 @@ if [[ "$FILE" == *manifest* ]]; then
     log "Schemas:   ${SCHEMAS}"
     log "Using archive: ${TARFILE}"
 
-    if [[ ! -f "$TARFILE" ]]; then
+    if [[ ! -f "${TARFILE}" ]]; then
         err "Referenced tar file not found"
-        exit $EXIT_FAIL
+        exit "${EXIT_FAIL}"
     fi
 
     DUMP_FILES=$(tar -tf "${TARFILE}" | grep '\.dmp$' || true)
 
-    if [[ -z "$DUMP_FILES" ]]; then
+    if [[ -z "${DUMP_FILES}" ]]; then
         err "No .dmp files found in archive"
-        exit $EXIT_FAIL
+        exit "${EXIT_FAIL}"
     fi
 
-    ARCHIVE_TO_EXTRACT="$TARFILE"
+    ARCHIVE_TO_EXTRACT="${TARFILE}"
 else
-    SCHEMAS=$(get_schemas "$QUERY" "$SRC_CONNECT")
-    if [[ -z "$SCHEMAS" ]]; then
+    SCHEMAS=$(get_schemas "${QUERY}" "${SRC_CONNECT}")
+    if [[ -z "${SCHEMAS}" ]]; then
         err "No schemas returned by query. Nothing to import."
-        exit $EXIT_FAIL
+        exit "${EXIT_FAIL}"
     fi
     log "Schemas found: ${SCHEMAS}"
 
-    if [[ "$FILE" == *.tar.gz || "$FILE" == *.tgz || "$FILE" == *.tar ]]; then
+    if [[ "${FILE}" == *.tar.gz || "${FILE}" == *.tgz || "${FILE}" == *.tar ]]; then
         DUMP_FILES=$(tar -tf "${FILE}" | grep '\.dmp$' || true)
 
-        if [[ -z "$DUMP_FILES" ]]; then
+        if [[ -z "${DUMP_FILES}" ]]; then
             err "No .dmp files found in archive: ${FILE}"
-            exit $EXIT_FAIL
+            exit "${EXIT_FAIL}"
         fi
 
-        ARCHIVE_TO_EXTRACT="$FILE"
-    elif [[ "$FILE" == *.dmp ]]; then
-        DUMP_FILES="$(basename "$FILE")"
-        DMP_TO_COPY="$FILE"
+        ARCHIVE_TO_EXTRACT="${FILE}"
+    elif [[ "${FILE}" == *.dmp ]]; then
+        DUMP_FILES="$(basename "${FILE}")"
+        DMP_TO_COPY="${FILE}"
     else
         err "Unrecognized file type: ${FILE}. Expected .dmp, .tar, .tar.gz, .tgz, or manifest"
-        exit $EXIT_BAD_ARGS
+        exit "${EXIT_BAD_ARGS}"
     fi
 fi
 
-if [[ "$DRY_RUN" == true ]]; then
+if [[ "${DRY_RUN}" == true ]]; then
     log "[DRY RUN] Would extract to: ${dir_path}"
     log "[DRY RUN] Dump files in archive:"
-    echo "$DUMP_FILES"
+    echo "${DUMP_FILES}"
     log "[DRY RUN] Schemas to import:"
     while read -r schema; do
         [[ -z "${schema// }" ]] && continue
         target_schema="${schema}"
-        [[ -n "$SUFFIX" ]] && target_schema="${schema}_${SUFFIX}"
+        [[ -n "${SUFFIX}" ]] && target_schema="${schema}_${SUFFIX}"
         log "[DRY RUN]   ${schema} -> ${target_schema}"
-    done <<< "$SCHEMAS"
+    done <<< "${SCHEMAS}"
     log "[DRY RUN] impdp options:"
     log "[DRY RUN]   directory=${DPUMP_DIR}"
     log "[DRY RUN]   table_exists_action=replace"
     log "[DRY RUN] No import performed"
-    exit $EXIT_DRYRUN
+    exit "${EXIT_DRYRUN}"
 fi
 
-if [[ -n "$ARCHIVE_TO_EXTRACT" ]]; then
-    if ! extract_archive "$ARCHIVE_TO_EXTRACT" "${dir_path}/"; then
+if [[ -n "${ARCHIVE_TO_EXTRACT}" ]]; then
+    if ! extract_archive "${ARCHIVE_TO_EXTRACT}" "${dir_path}/"; then
         err "Extraction failed for: ${ARCHIVE_TO_EXTRACT}"
-        exit $EXIT_FAIL
+        exit "${EXIT_FAIL}"
     fi
-elif [[ -n "$DMP_TO_COPY" ]]; then
-    cp "$DMP_TO_COPY" "${dir_path}/"
+elif [[ -n "${DMP_TO_COPY}" ]]; then
+    cp "${DMP_TO_COPY}" "${dir_path}/"
 fi
 
 while read -r f; do
-    basename_f=$(basename "$f")
+    basename_f=$(basename "${f}")
     if [[ ! -f "${dir_path}/${basename_f}" ]]; then
         err "Expected dump not found after extraction: ${basename_f}"
-        exit $EXIT_FAIL
+        exit "${EXIT_FAIL}"
     fi
-done <<< "$DUMP_FILES"
+done <<< "${DUMP_FILES}"
 
 log "Extracted to ${dir_path}"
 log "Found dump files:"
-echo "$DUMP_FILES"
+echo "${DUMP_FILES}"
 
 begin_imp_ts="Start-$(date '+%H:%M:%S')"
 
@@ -279,14 +279,14 @@ while read -r schema; do
     touch "${PARFILE}"
     chmod 600 "${PARFILE}"
 
-    remap_line=$(schema_remap "$schema" "$SUFFIX")
+    remap_line=$(schema_remap "${schema}" "${SUFFIX}")
 
-    mapfile -t DUMPS <<< "$DUMP_FILES"
+    mapfile -t DUMPS <<< "${DUMP_FILES}"
     schema_dumps=""
     for f in "${DUMPS[@]}"; do
-        basename_f=$(basename "$f")
-        if [[ "$basename_f" =~ (^|_)${schema}(_|\.) ]]; then
-            if [[ -n "$schema_dumps" ]]; then
+        basename_f=$(basename "${f}")
+        if [[ "${basename_f}" =~ (^|_)${schema}(_|\.) ]]; then
+            if [[ -n "${schema_dumps}" ]]; then
                 schema_dumps="${schema_dumps},${basename_f}"
             else
                 schema_dumps="${basename_f}"
@@ -294,7 +294,7 @@ while read -r schema; do
         fi
     done
 
-    if [[ -z "$schema_dumps" ]]; then
+    if [[ -z "${schema_dumps}" ]]; then
         err "No dump files found matching schema: ${schema}"
         import_failures=$((import_failures + 1))
         continue
@@ -310,11 +310,11 @@ directory=${DPUMP_DIR}
 table_exists_action=replace
 EOF
 
-    if [[ -n "$SUFFIX" ]]; then
+    if [[ -n "${SUFFIX}" ]]; then
         echo "remap_schema=${remap_line}" >> "${PARFILE}"
     fi
 
-    if ! impdp "'${TGT_CONNECT}'" parfile=${PARFILE}; then
+    if ! impdp "'${TGT_CONNECT}'" parfile="${PARFILE}"; then
         err "Import failed for schema: ${schema}"
         import_failures=$((import_failures + 1))
     else
@@ -331,7 +331,7 @@ EOF
     fi
 
     target_schema="${schema}"
-    [[ -n "$SUFFIX" ]] && target_schema="${schema}_${SUFFIX}"
+    [[ -n "${SUFFIX}" ]] && target_schema="${schema}_${SUFFIX}"
 
     obj_count=$(sqlplus -s "${TGT_CONNECT}" <<SQL
     SET HEADING OFF FEEDBACK OFF PAGESIZE 0
@@ -341,7 +341,7 @@ SQL
     )
     obj_count="${obj_count//[[:space:]]/}"
     log "Post-import: ${target_schema} has ${obj_count} objects"
-    if [[ ! "$obj_count" =~ ^[0-9]+$ ]]; then
+    if [[ ! "${obj_count}" =~ ^[0-9]+$ ]]; then
         warn "Could not parse object count for ${target_schema} (got: '${obj_count}')"
     elif (( obj_count == 0 )); then
         warn "Zero objects found — import may have failed silently"
@@ -349,16 +349,16 @@ SQL
 
     rm -f "${PARFILE}"
 
-done <<< "$SCHEMAS"
+done <<< "${SCHEMAS}"
 fin_imp_ts="End-$(date '+%H:%M:%S')"
 
 log "Import started: ${begin_imp_ts}"
 log "Import ended:   ${fin_imp_ts}"
 
-if [[ $import_failures -gt 0 ]]; then
+if [[ ${import_failures} -gt 0 ]]; then
     err "Import completed with ${import_failures} failure(s). Check logs."
-    exit $EXIT_FAIL
+    exit "${EXIT_FAIL}"
 else
     log "All imports completed successfully."
-    exit $EXIT_SUCCESS
+    exit "${EXIT_SUCCESS}"
 fi

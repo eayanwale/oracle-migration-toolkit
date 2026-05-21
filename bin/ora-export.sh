@@ -81,37 +81,37 @@ DRY_RUN=false
 
 ARGS=()
 for arg in "$@"; do
-    case $arg in
+    case ${arg} in
         --dry-run) DRY_RUN=true ;;
         --version) version; exit 0 ;;
         --help) help; exit 0 ;;
-        *) ARGS+=("$arg") ;;
+        *) ARGS+=("${arg}") ;;
     esac
 done
 set -- "${ARGS[@]+"${ARGS[@]}"}"
 
 while getopts ":vd:D:q:t:c:m:M:e:P:h" opt; do
-    case $opt in
-        d) DBNAME="$OPTARG" ;;
-        D) DPUMP_DIR="$OPTARG" ;;
-        q) QUERY="$OPTARG" ;;
-        t) THRESHOLD="$OPTARG" ;;
-        c) CONNECT_STRING="$OPTARG" ;;
-        m) MOUNT_POINT="$OPTARG" ;;
-        M) MANIFEST="$OPTARG" ;;
-        e) ENV_DIR="$OPTARG";; 
-        P) PARALLEL="$OPTARG" ;;
+    case ${opt} in
+        d) DBNAME="${OPTARG}" ;;
+        D) DPUMP_DIR="${OPTARG}" ;;
+        q) QUERY="${OPTARG}" ;;
+        t) THRESHOLD="${OPTARG}" ;;
+        c) CONNECT_STRING="${OPTARG}" ;;
+        m) MOUNT_POINT="${OPTARG}" ;;
+        M) MANIFEST="${OPTARG}" ;;
+        e) ENV_DIR="${OPTARG}";;
+        P) PARALLEL="${OPTARG}" ;;
         h) help; exit 0 ;;
         v) version; exit 0 ;;
-        ?) err "Invalid option: -${OPTARG}"; help; exit $EXIT_BAD_ARGS;;
+        *) err "Invalid option: -${OPTARG}"; help; exit "${EXIT_BAD_ARGS}";;
     esac
 done
 
 ENV_FILE="${ENV_DIR}/oracle_env_${DBNAME}.sh"
 
-if [[ -z "$DBNAME" || -z "$DPUMP_DIR" || -z "$QUERY" ]]; then
+if [[ -z "${DBNAME}" || -z "${DPUMP_DIR}" || -z "${QUERY}" ]]; then
     help
-    exit $EXIT_BAD_ARGS
+    exit "${EXIT_BAD_ARGS}"
 fi
 
 log "=== $0 $(version) ==="
@@ -127,29 +127,29 @@ source "$(dirname "$0")/../lib/ora-common.sh"
 require_commands "sqlplus" "expdp"
 
 log "Sourcing Oracle environment for ${DBNAME}"
-source "$ENV_FILE" || {
+source "${ENV_FILE}" || {
     log "No environmnt script defined. Sourcing via '${DBNAME}'"
-    source_oracle_env "$DBNAME"
+    source_oracle_env "${DBNAME}"
 }
 
-check_oracle_instance "$DBNAME" "$CONNECT_STRING"
+check_oracle_instance "${DBNAME}" "${CONNECT_STRING}"
 
-dir_path="$(validate_dpump_dir "$DPUMP_DIR" "$CONNECT_STRING")"
+dir_path="$(validate_dpump_dir "${DPUMP_DIR}" "${CONNECT_STRING}")"
 dpump="${dir_path#/}"
-[[ -z "$MOUNT_POINT" ]] && MOUNT_POINT="/${dpump%%/*}"
+[[ -z "${MOUNT_POINT}" ]] && MOUNT_POINT="/${dpump%%/*}"
 
 log "Data Pump directory ${DPUMP_DIR} validated (${dir_path})"
 
-check_disk_space "$MOUNT_POINT" "$THRESHOLD"
+check_disk_space "${MOUNT_POINT}" "${THRESHOLD}"
 
-schemas=$(get_schemas "$QUERY" "$CONNECT_STRING")
-if [[ -z "$schemas" ]]; then
+schemas=$(get_schemas "${QUERY}" "${CONNECT_STRING}")
+if [[ -z "${schemas}" ]]; then
     err "No schemas returned by query. Nothing to export"
-    exit $EXIT_FAIL
+    exit "${EXIT_FAIL}"
 fi
 log "Schemas found: ${schemas}"
 
-if [[ "$DRY_RUN" == true ]]; then
+if [[ "${DRY_RUN}" == true ]]; then
     log "[DRY RUN] Would execute:"
     log "[DRY RUN] expdp parfile=./${TS}_[${schemas}]_${DBNAME}.par"
     log "[DRY RUN]      SCHEMAS=${schemas}"
@@ -161,7 +161,7 @@ if [[ "$DRY_RUN" == true ]]; then
     log "[DRY RUN] Would create archive: ${TS}_export_${DBNAME}.tar.gz"
     log "[DRY RUN] Would write to manifest file: ${MANIFEST}"
     log "[DRY RUN] No export performed"
-    exit $EXIT_DRYRUN
+    exit "${EXIT_DRYRUN}"
 fi
 
 begin_exp_ts="Start-$(date '+%H:%M:%S')"
@@ -184,7 +184,7 @@ directory=${DPUMP_DIR}
 parallel=${PARALLEL}
 EOF
 
-    if ! expdp "'${CONNECT_STRING}'" parfile=${PARFILE}; then
+    if ! expdp "'${CONNECT_STRING}'" parfile="${PARFILE}"; then
         err "Export failed for schema: ${schema}"
         export_failures=$((export_failures + 1))
     else
@@ -202,35 +202,35 @@ EOF
 
     rm -f "${PARFILE}"
 
-done <<< "$schemas"
+done <<< "${schemas}"
 finished_exp_ts="End-$(date '+%H:%M:%S')"
 
 log "Archiving export logs for schemas: ${schemas}"
 TAR_FILE="${dir_path}/${TS}_export_${DBNAME}.tar.gz"
-cd "${dir_path}" || exit $EXIT_FAIL
-if tar -czf "$TAR_FILE" "${TS}"*.dmp "${TS}"*.log; then
+cd "${dir_path}" || exit "${EXIT_FAIL}"
+if tar -czf "${TAR_FILE}" "${TS}"*.dmp "${TS}"*.log; then
     rm -f "${dir_path}"/"${TS}"*.dmp "${dir_path}"/"${TS}"*.log
 else
     err "Failed to archive export logs."
-    exit $EXIT_FAIL
+    exit "${EXIT_FAIL}"
 fi
 cd - >/dev/null
 
 log "Archive created: ${TAR_FILE}"
-tar -tvf "$TAR_FILE"
-tar_size=$(stat -c%s "$TAR_FILE")
+tar -tvf "${TAR_FILE}"
+tar_size=$(stat -c%s "${TAR_FILE}")
 
-if [[ -z $MANIFEST ]]; then
+if [[ -z ${MANIFEST} ]]; then
     MANIFEST="${MOUNT_POINT}/tmp/ora-exports/${TS}_export_${DBNAME}_manifest.log"
 fi
 mkdir -p "$(dirname "${MANIFEST}")"
 echo "${begin_exp_ts}|${DBNAME}|$(printf '%s\n' "${schemas}" | paste -sd, -)|${TAR_FILE}|${tar_size}|${finished_exp_ts}" >> "${MANIFEST}"
 log "Export manifest updated: ${MANIFEST}"
 
-if [[ $export_failures -gt 0 ]]; then
+if [[ ${export_failures} -gt 0 ]]; then
     err "Export completed with ${export_failures} failures. Check logs for details."
-    exit $EXIT_FAIL
+    exit "${EXIT_FAIL}"
 else
     log "All exports completed successfully."
-    exit $EXIT_SUCCESS
+    exit "${EXIT_SUCCESS}"
 fi

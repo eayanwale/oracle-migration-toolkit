@@ -8,7 +8,8 @@ external-sources=true
 shell=bash
 
 # Don't flag dynamic `source "$ENV_FILE"` calls (env files live outside the repo).
-disable=SC1091
+# SC1090 = non-constant source path; SC1091 = file not found at lint time.
+disable=SC1090,SC1091
 
 # Opt-in checks worth turning on:
 enable=quote-safe-variables       # warns when an unquoted var could word-split
