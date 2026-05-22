@@ -45,8 +45,7 @@ check_oracle_instance() {
     local db_connect="${2:-/ as sysdba}"
 
     if ! pgrep -fi "pmon_${db_name}" >/dev/null 2>&1; then
-        echo "No pmon process found for ${db_name} - instance may be down"
-        return 1
+        echo "No pmon process found for ${db_name} via pgrep - continuing to SQL check (cmdline can be empty depending on how Oracle was started)" >&2
     fi
 
     local output
