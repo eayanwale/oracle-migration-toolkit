@@ -196,7 +196,3 @@ All scripts follow consistent patterns:
 
 - [linux-automation-toolkit](https://github.com/eayanwale/linux-automation-toolkit) — general-purpose ops scripts (disk monitoring, backup rotation, file transfer, system health)
 - [Control-Script_SH](https://github.com/eayanwale/Control-Script_SH) (archived) — the original monolithic DBA utility these scripts were extracted from
-
-## License
-
-MIT
