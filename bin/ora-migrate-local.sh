@@ -112,6 +112,7 @@ require_commands "sqlplus" "impdp" "expdp"
 
 dir_path="$(validate_dpump_dir "${DPUMP_DIR}" "${CONNECT_STRING}")"
 mount_point="$(df -P "${dir_path}" | tail -1 | awk '{print $NF}')"
+mount_point="${mount_point%/}"
 MANIFEST="${mount_point}/tmp/ora-exports/${SRC_DB}_manifest.log"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

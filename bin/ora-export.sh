@@ -193,9 +193,9 @@ EOF
     else
         log "Export complete: ${schema} -> ${TS}_${schema}_%U.dmp"
 
-        if grep -q "Successfully completed" "${dir_path}/${TS}_${schema}_export.log"; then
+        if grep -qi "successfully completed" "${dir_path}/${TS}_${schema}_export.log"; then
             log "Export log indicates success for schema: ${schema}"
-        elif grep -q "completed with" "${dir_path}/${TS}_${schema}_export.log"; then
+        elif grep -qi "completed with" "${dir_path}/${TS}_${schema}_export.log"; then
             warn "Export log indicates completion with warnings for schema: ${schema}"
         else
             err "Export log does not indicate success for schema: ${schema}"
@@ -226,6 +226,7 @@ if [[ -z ${MANIFEST} ]]; then
     MANIFEST="${ORA_EXPORTS}/${TS}_export_manifest.log"
 fi
 
+mkdir -p "$(dirname "${MANIFEST}")"
 echo "${begin_exp_ts}|${DBNAME}|$(printf '%s\n' "${schemas}" | paste -sd, -)|${TAR_FILE}|${tar_size}|${finished_exp_ts}" >> "${MANIFEST}"
 log "Export manifest updated: ${MANIFEST}"
 

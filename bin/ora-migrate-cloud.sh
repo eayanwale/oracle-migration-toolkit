@@ -183,6 +183,7 @@ check_oracle_instance "${SRC_DB}" "${SRC_CONNECT}"
 
 dir_path="$(validate_dpump_dir "${DPUMP_DIR}" "${SRC_CONNECT}")"
 mount_point="$(df -P "${dir_path}" | tail -1 | awk '{print $NF}')"
+mount_point="${mount_point%/}"
 MANIFEST="${mount_point}/tmp/ora-exports/${SRC_DB}_manifest.log"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
