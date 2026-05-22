@@ -182,8 +182,7 @@ require_commands "sqlplus" "expdp" "scp" "ssh"
 check_oracle_instance "${SRC_DB}" "${SRC_CONNECT}"
 
 dir_path="$(validate_dpump_dir "${DPUMP_DIR}" "${SRC_CONNECT}")"
-dpump="${dir_path#/}"
-mount_point="/${dpump%%/*}"
+mount_point="$(df -P "${dir_path}" | tail -1 | awk '{print $NF}')"
 MANIFEST="${mount_point}/tmp/ora-exports/${SRC_DB}_manifest.log"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -202,6 +201,7 @@ export_cmd=(
     -e "${ENV_DIR}"
     -t "${THRESHOLD}"
     -P "${PARALLEL}"
+    -M "${MANIFEST}"
 )
 
 if [[ "${DRY_RUN}" == true ]]; then

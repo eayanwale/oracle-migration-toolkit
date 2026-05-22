@@ -111,8 +111,7 @@ source "$(dirname "$0")/../lib/ora-common.sh"
 require_commands "sqlplus" "impdp" "expdp"
 
 dir_path="$(validate_dpump_dir "${DPUMP_DIR}" "${CONNECT_STRING}")"
-dpump="${dir_path#/}"
-mount_point="/${dpump%%/*}"
+mount_point="$(df -P "${dir_path}" | tail -1 | awk '{print $NF}')"
 MANIFEST="${mount_point}/tmp/ora-exports/${SRC_DB}_manifest.log"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -136,6 +135,7 @@ export_cmd=(
     -e "${ENV_DIR}"
     -t "${THRESHOLD}"
     -P "${PARALLEL}"
+    -M "${MANIFEST}"
 )
 
 import_cmd=(

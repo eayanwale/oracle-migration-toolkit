@@ -135,9 +135,8 @@ source "${ENV_FILE}" || {
 check_oracle_instance "${DBNAME}" "${CONNECT_STRING}"
 
 dir_path="$(validate_dpump_dir "${DPUMP_DIR}" "${CONNECT_STRING}")"
-dpump="${dir_path#/}"
 
-[[ -z "${MOUNT_POINT}" ]] && MOUNT_POINT="/${dpump%%/*}"
+[[ -z "${MOUNT_POINT}" ]] && MOUNT_POINT="$(df -P "${dir_path}" | tail -1 | awk '{print $NF}')"
 
 ORA_EXPORTS="${dir_path}/tmp/ora-exports"
 mkdir -p "${ORA_EXPORTS}"
