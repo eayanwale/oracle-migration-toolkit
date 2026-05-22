@@ -73,13 +73,9 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 err() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $*" >&2; }
 
-warn() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $*" >&2; }
-
 check_connectivity() {
     local user="$1"
     local host="$2"
-
-    log "=== Testing SSH connectivity to ${user}@${host} ==="
 
     local -a options=()
     options+=(-o "ConnectTimeout=${TIMEOUT}" -o BatchMode=yes -o LogLevel=QUIET)
@@ -90,7 +86,6 @@ check_connectivity() {
         return 1
     fi
 
-    log "SSH connection confirmed."
     return 0
 }
 
@@ -108,7 +103,6 @@ scp_file() {
         return 1
     fi
 
-    log "Successfully transferred ${src_path} to ${destination}."
     return 0
 }
 
@@ -119,13 +113,14 @@ DST_DB=""
 HOST=""
 REMOTE_USER=""
 DPUMP_DIR="DATA_PUMP_DIR"
+REMOTE_DPUMP_DIR="DATA_PUMP_DIR"
+REMOTE_PATH=""
 QUERY=""
 IDENTITY=""
 SRC_CONNECT="/ as sysdba"
 REMOTE_CONNECT="/ as sysdba"
 ENV_DIR="/home/oracle/scripts"
 REMOTE_ENV_DIR="/home/oracle/scripts"
-REMOTE_PATH="DATA_PUMP_DIR"
 SUFFIX=""
 THRESHOLD=85
 PARALLEL=1
@@ -143,13 +138,14 @@ for arg in "$@"; do
 done
 set -- "${ARGS[@]+"${ARGS[@]}"}"
 
-while getopts ":vs:d:H:u:D:q:i:c:C:e:E:r:p:t:P:T:" opt; do
+while getopts ":vs:d:H:u:D:q:i:c:C:e:E:r:p:t:Q:P:T:h" opt; do
     case ${opt} in
         s) SRC_DB="${OPTARG}" ;;
         d) DST_DB="${OPTARG}" ;;
         H) HOST="${OPTARG}" ;;
         u) REMOTE_USER="${OPTARG}" ;;
         D) DPUMP_DIR="${OPTARG}" ;;
+        Q) REMOTE_DPUMP_DIR="${OPTARG}" ;;
         q) QUERY="${OPTARG}" ;;
         i) IDENTITY="${OPTARG}" ;;
         t) THRESHOLD="${OPTARG}" ;;
@@ -173,7 +169,7 @@ if [[ -z "${SRC_DB}" || -z "${DST_DB}" || -z "${HOST}" || -z "${REMOTE_USER}" ||
 fi
 
 if [[ -z "${REMOTE_PATH}" ]]; then
-    err "Remote path (-p) is required for cloud migration"
+    err "Remote path (-p) is required for migration."
     exit "${EXIT_BAD_ARGS}"
 fi
 
@@ -181,7 +177,9 @@ log "=== $0 $(version) ==="
 
 source "$(dirname "$0")/../lib/ora-common.sh"
 
-require_commands "sqlplus" "impdp" "expdp" "scp" "ssh"
+require_commands "sqlplus" "expdp" "scp" "ssh"
+
+check_oracle_instance "${SRC_DB}" "${SRC_CONNECT}"
 
 dir_path="$(validate_dpump_dir "${DPUMP_DIR}" "${SRC_CONNECT}")"
 dpump="${dir_path#/}"
@@ -215,12 +213,13 @@ log "=== Phase 1: Export from ${SRC_DB} ==="
 export_rc=0
 "${export_cmd[@]}" || export_rc=$?
 
-log "=== Testing SSH connectivity to $REMOTE_USER@$HOST ==="
+log "=== Testing SSH connectivity to ${REMOTE_USER}@${HOST} ==="
 
-check_connectivity "$REMOTE_USER" "$HOST" || {
-    err "Cannot connect to $HOST as $REMOTE_USER. Aborting migration."
+check_connectivity "${REMOTE_USER}" "${HOST}" || {
+    err "Cannot connect to ${HOST} as ${REMOTE_USER}. Aborting migration."
     exit "${EXIT_FAIL}"
 }
+log "SSH connection confirmed."
 
 if [[ "${export_rc}" -eq "${EXIT_DRYRUN}" ]]; then
     log "=== Phase 2: Import to ${DST_DB} (dry-run plan) ==="
@@ -252,22 +251,33 @@ elif [[ "${export_rc}" -ne 0 ]]; then
     exit "${EXIT_FAIL}"
 fi
 
-log "=== Phase 2: Import to ${DST_DB} ==="
+log "=== Phase 2: Transfer to ${DST_DB} ==="
 
 IFS='|' read -r _ _ SCHEMAS TARFILE _ _ <<< "$(tail -1 "${MANIFEST}")"
 TARFILE="${TARFILE// /}"
 [[ "${TARFILE}" != /* ]] && TARFILE="${dir_path}/${TARFILE}"
 SCHEMAS=$(tr ',' '\n' <<< "${SCHEMAS// /}")
 
+ssh_opts=(-o "ConnectTimeout=${TIMEOUT}" -o BatchMode=yes)
+[[ -n "${IDENTITY}" ]] && ssh_opts+=(-i "${IDENTITY}")
+
+ssh "${ssh_opts[@]}" "${REMOTE_USER}@${HOST}" "mkdir -p ${REMOTE_PATH}/tmp/ora-exports/" || {
+    err "Failed to create ${REMOTE_PATH}/tmp/ora-exports/ on ${HOST}. Aborting migration."
+    exit "${EXIT_FAIL}"
+}
+
+
 scp_file "${TARFILE}" "${REMOTE_USER}@${HOST}:${REMOTE_PATH}/" || {
     err "Failed to transfer ${TARFILE} to ${HOST}. Aborting migration."
     exit "${EXIT_FAIL}"
 }
+log "Successfully transferred ${TARFILE} to ${REMOTE_USER}@${HOST}:${REMOTE_PATH}"
 
 scp_file "${MANIFEST}" "${REMOTE_USER}@${HOST}:${REMOTE_PATH}/tmp/ora-exports/" || {
     err "Failed to transfer ${MANIFEST} to ${HOST}. Aborting migration."
     exit "${EXIT_FAIL}"
 }
+log "Successfully transferred ${MANIFEST} to ${REMOTE_USER}@${HOST}:${REMOTE_PATH}"
 
 log "=== Phase 3: Generate remote import script ==="
 
@@ -294,7 +304,7 @@ if [[ -z "\${DUMP_FILES}" ]]; then
 fi
 
 echo "Extracting archive..."
-tar -xzf "\${TAR_FILE}" -C "\${REMOTE_DPUMP_DIR}/"
+tar -xzf "\${TAR_FILE}" -C "\${REMOTE_DPUMP_DIR}"
 
 import_failures=0
 for schema in ${SCHEMAS}; do
@@ -306,7 +316,7 @@ for schema in ${SCHEMAS}; do
 schemas=\${schema}
 dumpfile=${TS}_\${schema}_export_%U.dmp
 logfile=${TS}_\${schema}_import.log
-directory=${DPUMP_DIR}
+directory=${REMOTE_DPUMP_DIR}
 table_exists_action=replace
 PAR
 
@@ -319,11 +329,12 @@ PAR
         import_failures=\$((import_failures + 1))
     fi
     
-    rm -f "\${PARFILE}"
 done
 
 exit \${import_failures}
 REMOTE_EOF
+
+remote_rc=0
 
 log "=== Phase 4: Transfer and execute remote script ==="
 scp_file "${LOCAL_SCRIPT}" "${REMOTE_USER}@${HOST}:${REMOTE_SCRIPT}" || {
@@ -331,14 +342,9 @@ scp_file "${LOCAL_SCRIPT}" "${REMOTE_USER}@${HOST}:${REMOTE_SCRIPT}" || {
     rm -f "${LOCAL_SCRIPT}"
     exit "${EXIT_FAIL}"
 }
+log "Transfered remote script to ${HOST} successfully"
 
-ssh_opts=(-o "ConnectTimeout=${TIMEOUT}" -o BatchMode=yes)
-[[ -n "${IDENTITY}" ]] && ssh_opts+=(-i "${IDENTITY}")
-
-ssh "${ssh_opts[@]}" "${REMOTE_USER}@${HOST}" "mkdir -p ${REMOTE_PATH}/tmp/ora-exports/" || true
-
-ssh -T "${ssh_opts[@]}" "${REMOTE_USER}@${HOST}" "bash ${REMOTE_SCRIPT}"
-remote_rc=$?
+ssh -T "${ssh_opts[@]}" "${REMOTE_USER}@${HOST}" "bash ${REMOTE_SCRIPT}" || remote_rc=$?
 
 ssh "${ssh_opts[@]}" "${REMOTE_USER}@${HOST}" "rm -f ${REMOTE_SCRIPT}" 2>/dev/null || true
 rm -f "${LOCAL_SCRIPT}"

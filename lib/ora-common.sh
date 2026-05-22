@@ -6,7 +6,7 @@ require_commands() {
 
     for cmd in "$@"; do
         if ! command -v "${cmd}" >/dev/null 2>&1; then
-            err "Required command not found: ${cmd}"
+            echo "Required command not found: ${cmd}"
             missing=1
         fi
     done
@@ -18,12 +18,12 @@ source_oracle_env() {
     local db_name="$1"
 
     if [[ ! -f /etc/oratab ]]; then
-        err "/etc/oratab not found"
+        echo "/etc/oratab not found"
         return 1
     fi
 
     if ! grep -q "^${db_name}:" /etc/oratab; then
-        err "Database '${db_name}' not found in /etc/oratab"
+        echo "Database '${db_name}' not found in /etc/oratab"
         return 1
     fi
 
@@ -31,12 +31,12 @@ source_oracle_env() {
     . oraenv <<< "${db_name}"
 
     if [[ -z "${ORACLE_HOME:-}" ]]; then
-        err "ORACLE_HOME not set after sourcing oraenv for '${db_name}'"
+        echo "ORACLE_HOME not set after sourcing oraenv for '${db_name}'"
         return 1
     fi
 
-    log "ORACLE_HOME=${ORACLE_HOME}"
-    log "ORACLE_SID=${ORACLE_SID}"
+    echo "ORACLE_HOME=${ORACLE_HOME}"
+    echo "ORACLE_SID=${ORACLE_SID}"
     return 0
 }
 
@@ -45,7 +45,7 @@ check_oracle_instance() {
     local db_connect="${2:-/ as sysdba}"
 
     if ! pgrep -fi "pmon_${db_name}" >/dev/null 2>&1; then
-        err "No pmon process found for ${db_name} - instance may be down"
+        echo "No pmon process found for ${db_name} - instance may be down"
         return 1
     fi
 
@@ -61,10 +61,10 @@ EOF
     status=$(echo "${output}" | tr -s ' ')
 
     if echo "${output}" | grep -q "OPEN"; then
-        log "Instance status: OPEN"
+        echo "Instance status: OPEN"
         return 0
     else
-        err "The database ${db_name} is not open - status: ${status}"
+        echo "The database ${db_name} is not open - status: ${status}"
         return 1
     fi
 }
@@ -82,11 +82,10 @@ EOF
     )
 
     if [[ -z "${dir_path}" ]]; then
-        err "Directory ${dpump_dir} does not exist"
+        echo "Directory ${dpump_dir} does not exist"
         return 1
     elif [[ ! -d ${dir_path} ]]; then
-        err "Directory ${dpump_dir} at ${dir_path} does not exist on disk"
-        log "Export/import will fail at the OS level"
+        echo "Directory ${dpump_dir} at ${dir_path} does not exist on disk"
         return 1
     else
         echo "${dir_path}"
@@ -107,7 +106,7 @@ EOF
     )
     local schema_ex=$?
     if [[ ${schema_ex} -ne 0 || -z "${schemalist}" ]]; then
-        err "Schema query failed (exit code: ${schema_ex})"
+        echo "Schema query failed (exit code: ${schema_ex})"
         return 1
     fi
     echo "${schemalist}"
@@ -121,15 +120,15 @@ check_disk_space() {
     disk_check=$(df -P | awk -v mp="${mount}" '$NF == mp {gsub(/%/, "", $5); print $5}')
 
     if [[ -z "${disk_check}" ]]; then
-        err "Mount point '${mount}' not found in df output"
+        echo "Mount point '${mount}' not found in df output"
         return 1
     fi
 
     if (( disk_check > threshold )); then
-        warn "${mount} at ${disk_check}% - exceeds ${threshold}% threshold"
+        echo "${mount} at ${disk_check}% - exceeds ${threshold}% threshold"
         return 1
     else
-        log "${mount} at ${disk_check}% - under ${threshold}% threshold"
+        echo "${mount} at ${disk_check}% - under ${threshold}% threshold"
         return 0
     fi
 }

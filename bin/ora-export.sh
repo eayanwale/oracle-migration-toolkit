@@ -124,7 +124,7 @@ echo
 # shellcheck source=../lib/ora-common.sh
 source "$(dirname "$0")/../lib/ora-common.sh"
 
-require_commands "sqlplus" "expdp"
+require_commands "sqlplus" "expdp" "tar"
 
 log "Sourcing Oracle environment for ${DBNAME}"
 source "${ENV_FILE}" || {
@@ -136,7 +136,11 @@ check_oracle_instance "${DBNAME}" "${CONNECT_STRING}"
 
 dir_path="$(validate_dpump_dir "${DPUMP_DIR}" "${CONNECT_STRING}")"
 dpump="${dir_path#/}"
+
 [[ -z "${MOUNT_POINT}" ]] && MOUNT_POINT="/${dpump%%/*}"
+
+ORA_EXPORTS="${dir_path}/tmp/ora-exports"
+mkdir -p "${ORA_EXPORTS}"
 
 log "Data Pump directory ${DPUMP_DIR} validated (${dir_path})"
 
@@ -164,15 +168,15 @@ if [[ "${DRY_RUN}" == true ]]; then
     exit "${EXIT_DRYRUN}"
 fi
 
-begin_exp_ts="Start-$(date '+%H:%M:%S')"
-
 export_failures=0
+
+begin_exp_ts="Start-$(date '+%H:%M:%S')"
 while read -r schema; do
     [[ -z "${schema// }" ]] && continue
 
     log "Exporting schema: ${schema}"
 
-    PARFILE="./exp_${TS}_${schema}_${DBNAME}.par"
+    PARFILE="${ORA_EXPORTS}/exp_${TS}_${schema}_${DBNAME}.par"
     touch "${PARFILE}"
     chmod 600 "${PARFILE}"
 
@@ -199,14 +203,13 @@ EOF
             export_failures=$((export_failures + 1))
         fi
     fi
-
-    rm -f "${PARFILE}"
-
 done <<< "${schemas}"
 finished_exp_ts="End-$(date '+%H:%M:%S')"
 
 log "Archiving export logs for schemas: ${schemas}"
+
 TAR_FILE="${dir_path}/${TS}_export_${DBNAME}.tar.gz"
+
 cd "${dir_path}" || exit "${EXIT_FAIL}"
 if tar -czf "${TAR_FILE}" "${TS}"*.dmp "${TS}"*.log; then
     rm -f "${dir_path}"/"${TS}"*.dmp "${dir_path}"/"${TS}"*.log
@@ -221,9 +224,9 @@ tar -tvf "${TAR_FILE}"
 tar_size=$(stat -c%s "${TAR_FILE}")
 
 if [[ -z ${MANIFEST} ]]; then
-    MANIFEST="${MOUNT_POINT}/tmp/ora-exports/${TS}_export_${DBNAME}_manifest.log"
+    MANIFEST="${ORA_EXPORTS}/${TS}_export_manifest.log"
 fi
-mkdir -p "$(dirname "${MANIFEST}")"
+
 echo "${begin_exp_ts}|${DBNAME}|$(printf '%s\n' "${schemas}" | paste -sd, -)|${TAR_FILE}|${tar_size}|${finished_exp_ts}" >> "${MANIFEST}"
 log "Export manifest updated: ${MANIFEST}"
 

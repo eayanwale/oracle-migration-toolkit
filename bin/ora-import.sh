@@ -21,11 +21,11 @@ help() {
         -f FILE         Input file: .dmp, .tar, .tar.gz, .tgz, or *manifest*.log
 
         Required when NOT using a manifest:
-        -s SRC_CONNECT  Source database connect string (paired with -q)
         -q QUERY        SQL query returning schema names to import
                         (e.g., "select username from dba_users where username like 'STACK%'")
 
         Options:
+        -s SRC_CONNECT  Source database connect string (paired with -q)
         -c TGT_CONNECT  Target sqlplus/impdp connection string (default: "/ as sysdba")
                         Recommended: Oracle Wallet (/@DBNAME) to avoid plaintext passwords
         -e ENV_DIR      Directory containing oracle_env_<DBNAME>.sh files
@@ -89,14 +89,14 @@ schema_remap() {
     if [[ -n "${remap_attach}" ]]; then
         echo "${schema_str}:${schema_str}_${remap_attach}"
     else
-        echo "${schema_str}"
+        return 1
     fi
 }
 
 ENV_DIR="/home/oracle/scripts"
 DBNAME=""
-SRC_CONNECT=""
-FILE=""
+SRC_CONNECT="/ as sysdba"
+FILE=()
 DPUMP_DIR="DATA_PUMP_DIR"
 QUERY=""
 TGT_CONNECT="/ as sysdba"
@@ -121,7 +121,7 @@ while getopts ":vd:s:D:f:q:c:m:e:r:h" opt; do
         d) DBNAME="${OPTARG}" ;;
         s) SRC_CONNECT="${OPTARG}" ;;
         D) DPUMP_DIR="${OPTARG}" ;;
-        f) FILE="${OPTARG}" ;;
+        f) FILE+=("${OPTARG}") ;;
         q) QUERY="${OPTARG}" ;;
         c) TGT_CONNECT="${OPTARG}" ;;
         m) MOUNT_POINT="${OPTARG}" ;;
@@ -135,30 +135,45 @@ done
 
 ENV_FILE="${ENV_DIR}/oracle_env_${DBNAME}.sh"
 
-if [[ -z "${DBNAME}" ||  -z "${FILE}" ]]; then
-    err "At least import database (-d) and file (-f) are required"
+if [[ -z "${DBNAME}" ||  ${#FILE[@]} -eq 0 || -z "${DPUMP_DIR}" ]]; then
+    err "At least database name (-d), file (-f) and datapump dir name (-D) are required"
     exit "${EXIT_BAD_ARGS}"
 fi
 
-if [[ "${FILE}" != *manifest* ]]; then
-    if [[ -z "${QUERY}" || -z "${SRC_CONNECT}" ]]; then
-        err "Source connection (-s) and schema query (-q) required when not using a manifest"
+for f in "${FILE[@]}"; do
+    if [[ "${f}" == *manifest* ]]; then
+        if [[ ${#FILE[@]} -gt 1 ]]; then
+            warn "Manifest provided (${f}); ignoring other -f arguments"
+        fi
+        FILE=("${f}")
+        break
+    fi
+done
+
+if [[ "${FILE[0]}" != *manifest* && ${#FILE[@]} -gt 1 ]]; then
+    mapfile -t uniq < <(printf '%s\n' "${FILE[@]}" | awk '!seen[$0]++')
+    if (( ${#uniq[@]} < ${#FILE[@]} )); then
+        warn "Duplicate -f values ignored"
+    fi
+    FILE=("${uniq[@]}")
+fi
+
+if [[ "${FILE[0]}" != *manifest* && -z "${QUERY}" ]]; then
+    err "Schema query (-q) required when not using a manifest"
+    exit "${EXIT_BAD_ARGS}"
+fi
+
+for f in "${FILE[@]}"; do
+    if [[ ! -f "${f}" ]]; then
+        err "File not found: ${f}"
         exit "${EXIT_BAD_ARGS}"
     fi
-fi
-
-if [[ ! -f "${FILE}" ]]; then
-    err "File not found: ${FILE}"
-    exit "${EXIT_BAD_ARGS}"
-fi
+done
 
 # shellcheck source=../lib/ora-common.sh
 source "$(dirname "$0")/../lib/ora-common.sh"
 
-require_commands "sqlplus" "impdp"
-if [[ "${FILE}" == *.tar ]]; then
-    require_commands "tar"
-fi
+require_commands "sqlplus" "impdp" "tar"
 
 log "Sourcing Oracle environment for ${DBNAME}"
 source "${ENV_FILE}" || {
@@ -170,18 +185,21 @@ check_oracle_instance "${DBNAME}" "${TGT_CONNECT}"
 
 dir_path="$(validate_dpump_dir "${DPUMP_DIR}" "${TGT_CONNECT}")"
 dpump="${dir_path#/}"
-[[ -z ${MOUNT_POINT} ]] && MOUNT_POINT="/${dpump%%/*}"
-
 log "Data Pump directory ${DPUMP_DIR} validated (${dir_path})"
 
-ARCHIVE_TO_EXTRACT=""
-DMP_TO_COPY=""
+[[ -z ${MOUNT_POINT} ]] && MOUNT_POINT="/${dpump%%/*}"
 
-if [[ "${FILE}" == *manifest* ]]; then
-    IFS='|' read -r _ SOURCEDB SCHEMAS TARFILE _ _ <<< "$(tail -1 "${FILE}")"
+ORA_EXPORTS="${dir_path}/tmp/ora-exports"
+mkdir -p "${ORA_EXPORTS}"
+
+ARCHIVE_TO_EXTRACT=""
+DMP_TO_COPY=()
+
+if [[ "${FILE[0]}" == *manifest* ]]; then
+    IFS='|' read -r _ SOURCEDB SCHEMAS TARFILE _ _ <<< "$(tail -1 "${FILE[0]}")"
     SOURCEDB="${SOURCEDB// /}"
     TARFILE="${TARFILE// /}"
-    [[ "${TARFILE}" != /* ]] && TARFILE="$(dirname "${FILE}")/${TARFILE}"
+    [[ "${TARFILE}" != /* ]] && TARFILE="$(dirname "${FILE[0]}")/${TARFILE}"
     SCHEMAS=$(tr ',' '\n' <<< "${SCHEMAS// /}")
 
     log "Manifest file detected"
@@ -210,20 +228,31 @@ else
     fi
     log "Schemas found: ${SCHEMAS}"
 
-    if [[ "${FILE}" == *.tar.gz || "${FILE}" == *.tgz || "${FILE}" == *.tar ]]; then
-        DUMP_FILES=$(tar -tf "${FILE}" | grep '\.dmp$' || true)
+    if [[ "${FILE[0]}" == *.tar.gz || "${FILE[0]}" == *.tgz || "${FILE[0]}" == *.tar ]]; then
+        if [[ ${#FILE[@]} -gt 1 ]]; then
+            warn "Archive provided (${FILE[0]}); ignoring other -f arguments"
+        fi
+        DUMP_FILES=$(tar -tf "${FILE[0]}" | grep '\.dmp$' || true)
 
         if [[ -z "${DUMP_FILES}" ]]; then
-            err "No .dmp files found in archive: ${FILE}"
+            err "No .dmp files found in archive: ${FILE[0]}"
             exit "${EXIT_FAIL}"
         fi
 
-        ARCHIVE_TO_EXTRACT="${FILE}"
-    elif [[ "${FILE}" == *.dmp ]]; then
-        DUMP_FILES="$(basename "${FILE}")"
-        DMP_TO_COPY="${FILE}"
+        ARCHIVE_TO_EXTRACT="${FILE[0]}"
+    elif [[ "${FILE[0]}" == *.dmp ]]; then
+        DUMP_FILES=""
+        for f in "${FILE[@]}"; do
+            if [[ "${f}" != *.dmp ]]; then
+                err "Mixed file types — all -f must be .dmp when more than one is provided: ${f}"
+                exit "${EXIT_BAD_ARGS}"
+            fi
+            [[ -n "${DUMP_FILES}" ]] && DUMP_FILES+=$'\n'
+            DUMP_FILES+="$(basename "${f}")"
+        done
+        DMP_TO_COPY=("${FILE[@]}")
     else
-        err "Unrecognized file type: ${FILE}. Expected .dmp, .tar, .tar.gz, .tgz, or manifest"
+        err "Unrecognized file type: ${FILE[0]}. Expected .dmp, .tar, .tar.gz, .tgz, or manifest"
         exit "${EXIT_BAD_ARGS}"
     fi
 fi
@@ -251,8 +280,8 @@ if [[ -n "${ARCHIVE_TO_EXTRACT}" ]]; then
         err "Extraction failed for: ${ARCHIVE_TO_EXTRACT}"
         exit "${EXIT_FAIL}"
     fi
-elif [[ -n "${DMP_TO_COPY}" ]]; then
-    cp "${DMP_TO_COPY}" "${dir_path}/"
+elif [[ ${#DMP_TO_COPY[@]} -gt 0 ]]; then
+    cp "${DMP_TO_COPY[@]}" "${dir_path}"
 fi
 
 while read -r f; do
