@@ -9,7 +9,10 @@ shell=bash
 
 # Don't flag dynamic `source "$ENV_FILE"` calls (env files live outside the repo).
 # SC1090 = non-constant source path; SC1091 = file not found at lint time.
-disable=SC1090,SC1091
+# SC2029 = vars in ssh remote-command expand client-side. In ora-migrate-cloud.sh
+# we build paths (REMOTE_PATH, REMOTE_SCRIPT) locally then ssh to use them remotely
+# — local expansion is the whole point.
+disable=SC1090,SC1091,SC2029
 
 # Opt-in checks worth turning on:
 enable=quote-safe-variables       # warns when an unquoted var could word-split
