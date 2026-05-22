@@ -17,8 +17,10 @@ The general-purpose scripts (disk monitoring, backup rotation, file transfer, sy
 | `bin/ora-export.sh` | Data Pump schema export with parfile, tar archival, and manifest logging | Extracted from `DATABASE_BACKUP()` |
 | `bin/ora-import.sh` | Data Pump schema import with tar extraction, remap, and post-import verification | Extracted from `DATABASE_IMPORT()` |
 | `bin/ora-migrate-local.sh` | Orchestrates export → import on the same server | Extracted from `LOCAL_MIGRATION()` |
-| `bin/ora-migrate-cloud` | End-to-end on-prem → remote/cloud migration with dynamic remote script generation | Extracted from `CLOUD_MIGRATION()` |
+| `bin/ora-migrate-cloud.sh` | End-to-end on-prem → remote/cloud migration with dynamic remote script generation | Extracted from `CLOUD_MIGRATION()` |
 | `lib/ora-common.sh` | Shared helper functions sourced by all scripts | New — replaces duplicated logic |
+
+The rationale behind these choices — script split, manifest contract, parfile usage, exit-code scheme, dry-run plumbing, etc. — is documented in [design-decisions.md](design-decisions.md).
 
 ## Prerequisites
 
@@ -128,13 +130,15 @@ Orchestrates a full local migration by calling `ora-export.sh` then `ora-import.
   -q "select username from dba_users where username like 'STACK%'"
 ```
 
-### ora-migrate-cloud
+### ora-migrate-cloud.sh
 
 End-to-end migration from an on-prem Oracle database to a remote (cloud) instance. Exports locally via `ora-export.sh`, transfers the tar archive and manifest to the remote host via `scp`, dynamically generates a remote import script tailored to the destination environment, then pushes and executes it over `ssh`. The remote script extracts the archive into the destination's Data Pump directory and runs per-schema `impdp` with optional `remap_schema` suffix.
 
+Source and destination are configured independently — `-c`/`-C` for source/remote connect strings, `-D`/`-Q` for source/remote Data Pump directory objects, `-e`/`-E` for source/remote `oracle_env_<DB>.sh` directories. SSH transport is tunable via `-i IDENTITY` and `-T TIMEOUT` (`ConnectTimeout`, default 10s, with `BatchMode=yes`).
+
 ```bash
 # Migrate to a remote host (e.g. AWS EC2):
-./bin/ora-migrate-cloud \
+./bin/ora-migrate-cloud.sh \
   -s APEXDB -d CLOUDDB \
   -H ec2-xx-xx-xx-xx.compute.amazonaws.com \
   -u ec2-user \
@@ -142,8 +146,17 @@ End-to-end migration from an on-prem Oracle database to a remote (cloud) instanc
   -p /u01/app/oracle/admin/CLOUDDB/dpdump \
   -q "select username from dba_users where username like 'STACK%'"
 
-# Dry run:
-./bin/ora-migrate-cloud --dry-run \
+# With wallet auth on both ends and a different remote Data Pump directory:
+./bin/ora-migrate-cloud.sh \
+  -s APEXDB -d CLOUDDB \
+  -H db-host.example.com -u oracle -i ~/.ssh/oracle_id_rsa \
+  -p /u01/app/oracle/admin/CLOUDDB/dpdump \
+  -c "/@APEXDB" -C "/@CLOUDDB" \
+  -D DATA_PUMP_DIR -Q CLOUD_DPUMP_DIR \
+  -q "select username from dba_users where username like 'STACK%'"
+
+# Dry run — validates inputs and previews the generated remote impdp parfile:
+./bin/ora-migrate-cloud.sh --dry-run \
   -s APEXDB -d CLOUDDB \
   -H ec2-xx-xx-xx-xx.compute.amazonaws.com \
   -u ec2-user \
@@ -184,13 +197,18 @@ All scripts follow consistent patterns:
 - SSH key paths are passed via `-i` flag, never stored in scripts
 - The following are excluded via `.gitignore`: `*.pem`, `*.key`, `*.dmp`, `*.log`, `*.tar`, `*.par`, `*.env`, `wallet/`, `tnsnames.ora`, `sqlnet.ora`
 
+## Testing and CI
+
+- **Bats unit tests** ([tests/bats/](tests/bats/)) cover argument parsing, exit codes, help/version output, and dry-run flows for every script. Run with `bats tests/bats/`.
+- **Integration tests** ([tests/integration/](tests/integration/)) spin up `gvenzl/oracle-free:23-slim` via docker compose and run `ora-migrate-local.sh` end-to-end against a real Oracle 23ai Free instance.
+- **GitHub Actions** ([.github/workflows/](.github/workflows/)) runs ShellCheck on every push, executes the Bats suite, and runs the Docker-based integration migration on PRs and pushes to `main`.
+
 ## Roadmap
 
-- Bats unit tests for argument validation and exit codes
-- Oracle 23ai Free container integration tests in GitHub Actions
 - Manifest rotation and reporting tools
 - Support for pluggable database (PDB) level migrations
 - `scp`/`ssh` retry with backoff and checksum verification on cloud transfer
+- Cross-version Data Pump compatibility pre-flight check (19c ↔ 23ai)
 
 ## Related repos
 
