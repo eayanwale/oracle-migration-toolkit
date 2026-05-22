@@ -349,9 +349,9 @@ EOF
     else
         log "Import complete: ${schema} -> ${schema_dumps}"
 
-        if grep -q "Successfully completed" "${dir_path}/${TS}_${schema}_import.log"; then
+        if grep -qi "successfully completed" "${dir_path}/${TS}_${schema}_import.log"; then
             log "Import log indicates success for schema: ${schema}"
-        elif grep -q "completed with" "${dir_path}/${TS}_${schema}_import.log"; then
+        elif grep -qi "completed with" "${dir_path}/${TS}_${schema}_import.log"; then
             warn "Import log indicates completion with warnings for schema: ${schema}"
         else
             err "Import log does not indicate success for schema: ${schema}"
