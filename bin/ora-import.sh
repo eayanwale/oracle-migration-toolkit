@@ -304,7 +304,7 @@ while read -r schema; do
 
     log "Importing schema: ${schema}"
 
-    PARFILE="./imp_${TS}_${schema}_${DBNAME}.par"
+    PARFILE="/tmp/imp_${TS}_${schema}_${DBNAME}.par"
     touch "${PARFILE}"
     chmod 600 "${PARFILE}"
 

@@ -144,6 +144,7 @@ import_cmd=(
     -d "${DST_DB}"
     -D "${DPUMP_DIR}"
     -f "${MANIFEST}"
+    -c "${CONNECT_STRING}"
 )
 
 if [[ -n "${SUFFIX}" ]]; then
