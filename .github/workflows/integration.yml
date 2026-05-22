@@ -1,0 +1,47 @@
+name: Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  migrate-local:
+    name: ora-migrate-local against Oracle Free 23ai
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start Oracle
+        run: docker compose -f tests/integration/docker-compose.yml up -d
+
+      - name: Wait for Oracle to be healthy
+        run: |
+          for i in {1..60}; do
+            status=$(docker inspect -f '{{.State.Health.Status}}' oracle-test)
+            if [[ "$status" == "healthy" ]]; then
+              echo "Oracle healthy after $((i*5))s"
+              exit 0
+            fi
+            sleep 5
+          done
+          docker logs oracle-test
+          exit 1
+
+      - name: Run migrate-local integration test
+        run: docker exec -u oracle oracle-test bash /workspace/tests/integration/run-migrate-local.sh
+
+      - name: Show Oracle logs on failure
+        if: failure()
+        run: docker logs oracle-test
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f tests/integration/docker-compose.yml down -v

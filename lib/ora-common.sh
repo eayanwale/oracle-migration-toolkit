@@ -100,7 +100,7 @@ get_schemas() {
     local schemalist
     schemalist=$(sqlplus -S "${db_connect}" <<EOF
 set echo off heading off feedback off term off pagesize 0
-${query}
+${query};
 exit
 EOF
     )

@@ -1,0 +1,17 @@
+services:
+  oracle:
+    image: gvenzl/oracle-free:23-slim
+    container_name: oracle-test
+    environment:
+      ORACLE_PASSWORD: testpw
+      APP_USER: test_user
+      APP_USER_PASSWORD: testpw
+    volumes:
+      - ../..:/workspace
+      - ./init:/container-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s

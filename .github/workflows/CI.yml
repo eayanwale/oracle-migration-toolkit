@@ -23,3 +23,17 @@ jobs:
 
       - name: Lint lib/ scripts
         run: find lib/ -name '*.sh' -print0 | xargs -0 shellcheck
+
+  test:
+    name: Bats
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install bats
+        run: sudo apt-get update && sudo apt-get install -y bats
+
+      - name: Run bats tests
+        run: bats tests/bats/
